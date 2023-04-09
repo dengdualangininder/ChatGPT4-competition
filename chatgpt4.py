@@ -1,51 +1,53 @@
-import json
+import openai
 import os
-import requests
+import json
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
+# 初始化 LineBot
 line_bot_api = LineBotApi(os.environ['CHANNEL_ACCESS_TOKEN'])
 handler = WebhookHandler(os.environ['CHANNEL_SECRET'])
 
-    
-def lambda_handler(event, context):
-    signature = event.get('headers', {}).get('X-Line-Signature', None)
-    body = event.get('body', None)
+# 初始化 OpenAI
+openai.api_key = os.environ['OPENAI_API_KEY']
 
-    if not signature or not body:
-        return {'statusCode': 400, 'body': 'Missing signature or body'}
+# 处理用户消息
+@handler.add(MessageEvent, message=TextMessage)
+def handle_message(event):
+    user_message = event.message.text
+
+    # 使用 OpenAI 进行语言处理
+    response = openai.Completion.create(
+        engine="davinci",
+        prompt=user_message,
+        max_tokens=60
+    )
+
+    # 获取 OpenAI 的回复
+    ai_reply = response.choices[0].text.strip()
+
+    # 将回复发送给用户
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text=ai_reply)
+    )
+
+# 处理 Webhook 请求
+def lambda_handler(event, context):
+    signature = event['headers']['X-Line-Signature']
+    body = event['body']
 
     try:
         handler.handle(body, signature)
-    except InvalidSignatureError:
+    except InvalidSignatureError as e:
+        print("Invalid signature. " + str(e))
         return {
             'statusCode': 400,
-            'body': 'Invalid signature. Please check your channel access token/channel secret.'
+            'body': json.dumps("Invalid signature.")
         }
 
-    return {'statusCode': 200, 'body': 'OK'}
-
-
-@handler.add(MessageEvent, message=TextMessage)
-def handle_message(event):
-    text = event.message.text
-    reply_text = get_chatgpt_response(text)
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-
-def get_chatgpt_response(prompt):
-    try:
-        api_key = os.environ['OPENAI_API_KEY']
-        headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {api_key}'}
-        data = {
-            'model': 'text-davinci-002',
-            'prompt': prompt,
-            'max_tokens': 50,
-            'temperature': 0.8,
-        }
-        response = requests.post('https://api.openai.com/v1/engines/davinci-codex/completions', headers=headers, json=data)
-        response.raise_for_status()
-        response_text = response.json()['choices'][0]['text'].strip()
-        return response_text
-    except Exception as e:
-        return f"Error getting response from OpenAI: {str(e)}"
+    return {
+        'statusCode': 200,
+        'body': json.dumps("Hello from Lambda!")
+    }
